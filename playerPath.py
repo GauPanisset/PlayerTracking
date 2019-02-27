@@ -4,7 +4,8 @@ import numpy as np
 from PIL import ImageGrab
 from matplotlib import pyplot as plt
 import time
-
+import math
+from number import numberDetection
 
 MAX_SPEED = {"zipline": 14, "plane": 20, "quad": 12, "feet": 6, "glider": 19}
 MAX = 25 * 4  # pixel/second with x4 recording
@@ -136,7 +137,7 @@ def get_path(map_img, timer, freq):
             while time.time() - start_time < timer:
                 if time.time() - last_time > 1 / freq:
 
-                    template = screen_record()
+                    template = screen_record((1625, 15, 1625 + SIZE, 15 + SIZE))
 
                     if count < 5:
                         node = template_matching(map_img, template)
@@ -177,6 +178,113 @@ def get_path(map_img, timer, freq):
     return path, path_time
 
 
+def clock_start(clock_img, clock_type):
+    """
+    Return True if the clock image is the clock type
+    :param clock_img: image of the clock icon
+    :param clock_type: clock type "zone" or "bus"
+    :return: True if the type of the clock icon is clock_type
+    """
+    w, h = clock_img.shape[::-1]
+    bool_lines = {"zone":
+                      {5: [False, True, False],
+                       15: [False, True, False, True, False, True, False],
+                       25: [False, True, False, True, False]},
+                  "bus":
+                      {5: [False],
+                       15: [False, True, False],
+                       25: [False]},
+                  "jump":
+                      {7: [False, True, False],
+                       15: [False, True, False, True, False],
+                       26: [False, True, False]}}
+    for i in bool_lines[clock_type].keys():
+        bool_array = [clock_img[i][0] > 240]
+        for j in range(1, w):
+            if bool_array[-1] != (clock_img[i][j] > 240):
+                bool_array.append(clock_img[i][j] > 240)
+        if not (bool_array == bool_lines[clock_type][i] or bool_array[1:-1] == bool_lines[clock_type][i]):
+            return False
+    return True
+
+
+def get_death_time(replay_length):
+    death_marker = cv2.imread("images/DeathMarker.png", 0)
+    time_line = screen_record((120, 855, 120 + 1680, 855 + 40))
+    _, death_marker = cv2.threshold(death_marker, 220, 255, cv2.THRESH_BINARY_INV)
+    _, time_line = cv2.threshold(time_line, 220, 255, cv2.THRESH_BINARY_INV)
+    x, y = template_matching(time_line, death_marker)
+    return x*replay_length/1680
+
+
+def get_path_auto(map_img, freq):
+    """
+    Return path.
+    :param map_img: image of the map
+    :param freq: image/second
+    :return: list of nodes that are the position of the mini map in the fortnite map
+    """
+    path = []
+    path_time = []
+    replay_length = []
+    count = 0
+    death_time = 400
+    record = False
+    offset = None
+    model = numberDetection.setup_model("number")
+    tmp_length = numberDetection.detect_number(model, screen_record((1825, 890, 1895, 916)))
+    tmp_length = math.ceil(numberDetection.array_to_second(tmp_length, 4)/4) if numberDetection.array_to_second(tmp_length, 4) > 0 else 400
+    replay_length.append(tmp_length)
+    last_node = None
+
+    start_time = time.time()
+    last_time = time.time()
+    while time.time() - start_time < (max(replay_length, key=replay_length.count) if death_time >= 400 else math.ceil(death_time)):
+        if not offset and clock_start(screen_record((1637, 304, 1674, 340)), "zone"):
+            offset = numberDetection.detect_number(model, screen_record((25, 890, 95, 916)))
+            offset = numberDetection.array_to_second(offset)
+            if not record:
+                record = True
+        if not record and clock_start(screen_record((1637, 304, 1674, 340)), "jump"):
+            death_time = get_death_time(max(replay_length, key=replay_length.count))
+            record = True
+        if len(replay_length) < 20 or max(replay_length, key=replay_length.count) > 400:
+            tmp_length = numberDetection.detect_number(model, screen_record((1825, 890, 1895, 916)))
+            tmp_length = math.ceil(numberDetection.array_to_second(tmp_length, 4) / 4) if numberDetection.array_to_second(tmp_length,4) > 0 else 400
+            replay_length.append(tmp_length)
+
+        if record and time.time() - last_time > 1 / freq:
+
+            template = screen_record((1625, 15, 1625 + SIZE, 15 + SIZE))
+
+            if count < 5:
+                node = template_matching(map_img, template)
+
+                if distance(last_node, node) < MAX:
+                    count += 1
+                    last_node = node
+                    path.append(node)
+                    path_time.append((last_time - start_time) * 4)
+                else:
+                    count = 0
+                    last_node = node
+                    path = []
+            else:
+
+                x1 = path[-1][0] - int(MAX/freq + SIZE // 1.9) if path[-1][0] - (MAX/freq + SIZE // 1.9) > 0 else 0
+                x2 = path[-1][0] + int(MAX/freq + SIZE // 1.9) if path[-1][0] + (MAX/freq + SIZE // 1.9) > 0 else 0
+                y1 = path[-1][1] - int(MAX/freq + SIZE // 1.9) if path[-1][1] - (MAX/freq + SIZE // 1.9) > 0 else 0
+                y2 = path[-1][1] + int(MAX/freq + SIZE // 1.9) if path[-1][1] + (MAX/freq + SIZE // 1.9) > 0 else 0
+
+                _node = template_matching(map_img[y1:y2, x1:x2], template)
+                node = (_node[0] + x1, _node[1] + y1)
+
+                path.append(node)
+                path_time.append((last_time - start_time) * 4)
+
+            last_time = time.time()
+    return path, path_time
+
 
 def display_path(map_img, path):
     """
@@ -191,17 +299,15 @@ def display_path(map_img, path):
     plt.show()
 
 
-def screen_record(disp=False, rec=(False, "", "")):
+def screen_record(rect, disp=False, rec=(False, "", "")):
     """
     Get the mini-map from the screen
+    :param rect: rectangle (x1, y1, x2, y2) in which it records
     :param disp: display the image (default: False)
     :param rec: save the image in directory rec[1] with the name rec[2](default: False)
     :return: grayscale image in numpy array
     """
-    x1 = 1625
-    y1 = 15
-    size = SIZE
-    printscreen = np.array(ImageGrab.grab(bbox=(x1, y1, x1 + size, y1 + size)))
+    printscreen = np.array(ImageGrab.grab(bbox=(rect[0], rect[1], rect[2], rect[3])))
     printscreen = cv2.cvtColor(printscreen, cv2.COLOR_BGR2GRAY)
     if disp:
         plt.imshow(printscreen, cmap='gray')
@@ -224,7 +330,7 @@ def record_mini(dest, timer, freq):
     last_time = time.time()
     while time.time() - start_time < timer:
         if time.time() - last_time > 1/freq:
-            screen_record(False, (True, dest, "/mini-" + str(count) + ".png"))
+            screen_record((1625, 15, 1625 + SIZE, 15 + SIZE), False, (True, dest, "/mini-" + str(count) + ".png"))
             last_time = time.time()
             count += 1
 

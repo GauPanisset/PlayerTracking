@@ -358,15 +358,17 @@ class Reader:
             if elim.knocked == 1:
                 memory["players"].append(elim.eliminated)
                 memory["info"].append({"eliminator": elim.eliminator, "gun": elim.gun_type, "time": elim.time})
+                players_json[elim.eliminated]["ko"].append(
+                    {"time": elim.time, "gun": elim.gun_type})
             elif elim.eliminated in memory["players"]:
                 index = memory["players"].index(elim.eliminated)
-                players_json[memory["info"][index]["eliminator"]]["kill"].append(
-                    {"time": memory["info"][index]["time"], "gun": memory["info"][index]["gun"]})
-                players_json[elim.eliminated]["ko"].append(
-                    {"time": memory["info"][index]["time"], "gun": memory["info"][index]["gun"]})
+                if memory["info"][index]["eliminator"] != elim.eliminated:
+                    players_json[memory["info"][index]["eliminator"]]["kill"].append(
+                        {"time": memory["info"][index]["time"], "gun": memory["info"][index]["gun"]})
             else:
-                players_json[elim.eliminator]["kill"].append(
-                    {"time": elim.time, "gun": elim.gun_type})
+                if elim.eliminator != elim.eliminated:
+                    players_json[elim.eliminator]["kill"].append(
+                        {"time": elim.time, "gun": elim.gun_type})
                 players_json[elim.eliminated]["ko"].append(
                     {"time": elim.time, "gun": elim.gun_type})
 
